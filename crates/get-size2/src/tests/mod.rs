@@ -1,5 +1,13 @@
 #![expect(dead_code, clippy::unwrap_used, reason = "This is a test module")]
 
+// The crate itself is `no_std`, so the tests have to import the `alloc` based prelude items
+// explicitly.
+use std::borrow::ToOwned;
+use std::boxed::Box;
+use std::string::String;
+use std::vec;
+use std::vec::Vec;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, LinkedList, VecDeque};
 use std::ffi::{CStr, CString, OsStr, OsString};
@@ -270,6 +278,123 @@ fn tracker() {
 }
 
 #[test]
+fn derive_newtype_attributes() {
+    // An attribute handled field must not shift the position of the following tuple fields.
+    #[derive(GetSize)]
+    struct Ignored(#[get_size(ignore)] String, String);
+
+    #[derive(GetSize)]
+    struct Fixed(#[get_size(size = 1024)] String, String);
+
+    #[derive(GetSize)]
+    struct Helper(#[get_size(size_fn = helper)] String, String);
+
+    fn helper(_value: &String) -> usize {
+        7
+    }
+
+    assert_eq!(Ignored("aaaa".into(), "bb".into()).get_heap_size(), 2);
+    assert_eq!(Fixed("aaaa".into(), "bb".into()).get_heap_size(), 1024 + 2);
+    assert_eq!(Helper("aaaa".into(), "bb".into()).get_heap_size(), 7 + 2);
+}
+
+#[test]
+fn derive_enum_variant_attributes() {
+    // The field attributes have to be honored on enum variants as well, on unnamed and on named
+    // fields alike, instead of being silently discarded.
+    #[derive(GetSize)]
+    enum Unnamed {
+        Ignored(#[get_size(ignore)] String, String),
+        Fixed(#[get_size(size = 1024)] String, String),
+        Helper(#[get_size(size_fn = helper)] String, String),
+    }
+
+    #[derive(GetSize)]
+    enum Named {
+        Ignored {
+            #[get_size(ignore)]
+            first: String,
+            second: String,
+        },
+        Fixed {
+            #[get_size(size = 1024)]
+            first: String,
+            second: String,
+        },
+        Helper {
+            #[get_size(size_fn = helper)]
+            first: String,
+            second: String,
+        },
+    }
+
+    fn helper(_value: &String) -> usize {
+        7
+    }
+
+    assert_eq!(
+        Unnamed::Ignored("aaaa".into(), "bb".into()).get_heap_size(),
+        2
+    );
+    assert_eq!(
+        Unnamed::Fixed("aaaa".into(), "bb".into()).get_heap_size(),
+        1024 + 2
+    );
+    assert_eq!(
+        Unnamed::Helper("aaaa".into(), "bb".into()).get_heap_size(),
+        7 + 2
+    );
+
+    assert_eq!(
+        Named::Ignored {
+            first: "aaaa".into(),
+            second: "bb".into()
+        }
+        .get_heap_size(),
+        2
+    );
+    assert_eq!(
+        Named::Fixed {
+            first: "aaaa".into(),
+            second: "bb".into()
+        }
+        .get_heap_size(),
+        1024 + 2
+    );
+    assert_eq!(
+        Named::Helper {
+            first: "aaaa".into(),
+            second: "bb".into()
+        }
+        .get_heap_size(),
+        7 + 2
+    );
+}
+
+#[test]
+fn default_tracker() {
+    // The derive macro cannot know whether the `alloc` feature is active, so it delegates to
+    // `get_size2::default_tracker()`, which must still deduplicate shared ownership.
+    #[derive(GetSize)]
+    struct Shared {
+        first: Rc<String>,
+        second: Rc<String>,
+    }
+
+    let shared = Rc::new(String::from("hello"));
+    let value = Shared {
+        first: Rc::clone(&shared),
+        second: Rc::clone(&shared),
+    };
+
+    assert_eq!(value.get_heap_size(), size_of::<String>() + 5);
+
+    let mut tracker = get_size2::default_tracker();
+    assert!(tracker.track(Rc::as_ptr(&shared)));
+    assert!(!tracker.track(Rc::as_ptr(&shared)));
+}
+
+#[test]
 fn boxed_slice() {
     let boxed = vec![1u8; 10].into_boxed_slice();
     assert_eq!(boxed.get_heap_size(), size_of::<u8>() * boxed.len());
@@ -285,6 +410,16 @@ fn boxed_slice() {
 
     let arc = Arc::<[u8]>::from([1u8; 10]);
     assert_eq!(arc.get_heap_size(), size_of::<u8>() * arc.len());
+
+    let rc_slice = Rc::<[String]>::from([String::from("hello"), String::from("world")]);
+    let (size, _) = (Rc::clone(&rc_slice), Rc::clone(&rc_slice))
+        .get_heap_size_with_tracker(StandardTracker::new());
+    assert_eq!(size, rc_slice.get_heap_size());
+
+    let arc_slice = Arc::<[String]>::from([String::from("hello"), String::from("world")]);
+    let (size, _) = (Arc::clone(&arc_slice), Arc::clone(&arc_slice))
+        .get_heap_size_with_tracker(StandardTracker::new());
+    assert_eq!(size, arc_slice.get_heap_size());
 }
 
 #[test]
@@ -295,8 +430,16 @@ fn boxed_str() {
     let rc: Rc<str> = "a".to_owned().into();
     assert_eq!(rc.get_heap_size(), size_of::<u8>() * boxed.len());
 
+    let (size, _) =
+        (Rc::clone(&rc), Rc::clone(&rc)).get_heap_size_with_tracker(StandardTracker::new());
+    assert_eq!(size, rc.get_heap_size());
+
     let arc: Arc<str> = "a".to_owned().into();
     assert_eq!(arc.get_heap_size(), size_of::<u8>() * boxed.len());
+
+    let (size, _) =
+        (Arc::clone(&arc), Arc::clone(&arc)).get_heap_size_with_tracker(StandardTracker::new());
+    assert_eq!(size, arc.get_heap_size());
 }
 
 #[test]
@@ -518,14 +661,17 @@ fn covers_std_types_remaining_branches() {
     };
     assert_eq!(c_string.get_heap_size(), 4);
 
+    // Borrowed forms own nothing, just like `&str`, `&Path` and `&[T]`.
     let c_str: &CStr = c_string.as_c_str();
-    assert_eq!(c_str.get_heap_size(), 4);
+    assert_eq!(c_str.get_heap_size(), 0);
+    assert_eq!(c_str.get_size(), size_of::<&CStr>());
 
     let os_string = OsString::from("hello");
     assert_eq!(os_string.get_heap_size(), os_string.len());
 
     let os_str: &OsStr = os_string.as_os_str();
-    assert_eq!(os_str.get_heap_size(), os_str.len());
+    assert_eq!(os_str.get_heap_size(), 0);
+    assert_eq!(os_str.get_size(), size_of::<&OsStr>());
 
     let path_buf = PathBuf::from("folder/file.txt");
     assert!(path_buf.get_heap_size() >= path_buf.as_os_str().len());
@@ -621,4 +767,28 @@ fn covers_tracker_trait_forwarders() {
     no_tracker.set_answer(true);
     assert!(no_tracker.answer());
     assert!(no_tracker.track(addr));
+}
+
+#[test]
+fn references_to_unsized_targets() {
+    // References borrow their data, so they never report any heap size, no matter whether the
+    // target is sized or not.
+    let slice: &[String] = &[String::from("a"), String::from("b")];
+    assert_eq!(slice.get_heap_size(), 0);
+    assert_eq!(slice.get_size(), size_of::<&[String]>());
+
+    let text: &str = "hello";
+    assert_eq!(text.get_heap_size(), 0);
+    assert_eq!(text.get_size(), size_of::<&str>());
+
+    let mut owned = String::from("hello");
+    let text_mut: &mut str = owned.as_mut_str();
+    assert_eq!(text_mut.get_heap_size(), 0);
+
+    let trait_object: &dyn core::fmt::Debug = &42u64;
+    assert_eq!(trait_object.get_heap_size(), 0);
+    assert_eq!(trait_object.get_size(), size_of::<&dyn core::fmt::Debug>());
+
+    let raw: *const [u8] = &raw const b"raw"[..];
+    assert_eq!(raw.get_heap_size(), 0);
 }

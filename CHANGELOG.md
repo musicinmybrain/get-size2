@@ -2,6 +2,68 @@
 
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
+## [0.11.0](https://github.com/bircni/get-size2/compare/0.10.3..0.11.0) - 2026-08-03
+
+### Documentation
+
+- Overhaul the crate and derive documentation - ([f03e05c](https://github.com/bircni/get-size2/commit/f03e05ca8658cc69a964ff6ff3f8e799e27c6965)) - bircni
+
+### Features
+
+-  [**breaking**] Add `no_std` support (#57) - ([dd08267](https://github.com/bircni/get-size2/commit/dd082675332ffb872090089f29312db3cb29ad6f)) - bircni
+- Honor field attributes on enum variant fields - ([19c495e](https://github.com/bircni/get-size2/commit/19c495e3f30830dfb15f4823fe180545ec0c396d)) - bircni
+-  [**breaking**] Implement `GetSize` for references to unsized targets - ([135967f](https://github.com/bircni/get-size2/commit/135967fef6650fc18d2939cc02739ce57d031457)) - bircni
+
+## [0.10.3](https://github.com/bircni/get-size2/compare/0.10.2..0.10.3) - 2026-07-20
+
+### Bug Fixes
+
+- Gate 64-bit atomic impls behind target_has_atomic (#54) - ([19e8784](https://github.com/bircni/get-size2/commit/19e87840a80d08bd57c5c326dfc6a7dc0d748b4a)) - bircni
+- Use pointer-width-independent sizes in indexmap/ordermap tests (#56) - ([a9982c6](https://github.com/bircni/get-size2/commit/a9982c609a7dafd93c2859687f2c330af937690c)) - bircni
+
+### Features
+
+- Add portable-atomic feature with GetSize impls for portable_atomic types - ([695ade6](https://github.com/bircni/get-size2/commit/695ade66d1f67b5e9363aaa673db5d6d2ce14646)) - bircni
+
+### Tests
+
+- Register test_orx_concurrent_vec as a test case - ([ccf2051](https://github.com/bircni/get-size2/commit/ccf205111debcc6f423b4c6442626816e0e3e8de)) - bircni
+
+### Ci
+
+- Build and test across a 64-bit and 32-bit target matrix - ([58d7d39](https://github.com/bircni/get-size2/commit/58d7d3991f1382bab17dcc7731944a556144977b)) - bircni
+
+## [0.10.2](https://github.com/bircni/get-size2/compare/0.10.1..0.10.2) - 2026-07-15
+
+### Bug Fixes
+
+- Bump compact_str to 0.10 (#53) - ([736f9f1](https://github.com/bircni/get-size2/commit/736f9f1d6f53613ce4ab15f764d8b6c0e78b24f1)) - Charlie Marsh
+
+## [0.10.1](https://github.com/bircni/get-size2/compare/0.10.0..0.10.1) - 2026-06-11
+
+### Bug Fixes
+
+- Track shared DST allocations (#52) - ([9141b6a](https://github.com/bircni/get-size2/commit/9141b6a67600c0accd398fc9c3c71b1f6b360e1e)) - Micha Reiser
+
+### Miscellaneous Chores
+
+- Adjust versioning - ([76ac0ca](https://github.com/bircni/get-size2/commit/76ac0ca330f41bce1cd84f8f29327821b7ae4085)) - Nicolas
+
+## [0.10.0](https://github.com/bircni/get-size2/compare/0.9.0..0.10.0) - 2026-06-05
+
+### Features
+
+- Add orx-concurrent-vec feature with GetSize impl for ConcurrentVec (#50) - ([b509203](https://github.com/bircni/get-size2/commit/b509203df98d4e2d371c7ec94aca90f3480593ff)) - Al Johri
+- Add roaring feature with GetSize impls for RoaringBitmap and RoaringTreemap (#49) - ([6b411c1](https://github.com/bircni/get-size2/commit/6b411c1d611a6226319cc3375d6f81fc1ec58283)) - Al Johri
+
+## [0.9.0](https://github.com/bircni/get-size2/compare/0.8.0..0.9.0) - 2026-05-15
+
+### Features
+
+- Add parking_lot feature with GetSize + GetSizeTracker impls (#46) - ([18b15c8](https://github.com/bircni/get-size2/commit/18b15c89b3ab662a7ca3c5c4b9df82dc41e1093a)) - Al Johri
+- Add half feature with GetSize impls for f16 and bf16 (#47) - ([725777b](https://github.com/bircni/get-size2/commit/725777b9049dd50b6791c6e45add1ecd2ad282e7)) - Al Johri
+- Add dashmap feature with GetSize impls for DashMap and DashSet (#48) - ([faf1b09](https://github.com/bircni/get-size2/commit/faf1b09dfb4ae16a296f89ead81fe82ba3495036)) - Al Johri
+
 ## [0.8.0](https://github.com/bircni/get-size2/compare/0.7.4..0.8.0) - 2026-04-20
 
 ### Bug Fixes

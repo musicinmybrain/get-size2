@@ -1,4 +1,7 @@
-#![doc = include_str!("./lib.md")]
+//! Derives the `GetSize` trait of [`get-size2`](https://docs.rs/get-size2) for structs and enums.
+//!
+//! This crate is re-exported by `get-size2` and is meant to be used through its `derive` feature.
+//! See [`GetSize`](macro@GetSize) for the attribute reference.
 
 use attribute_derive::{Attribute, FromAttr};
 use proc_macro::TokenStream;
@@ -114,6 +117,7 @@ fn add_trait_bounds(mut generics: syn::Generics, ignored: &Vec<syn::PathSegment>
     generics
 }
 
+#[doc = include_str!("./derive.md")]
 #[proc_macro_derive(GetSize, attributes(get_size))]
 pub fn derive_get_size(input: TokenStream) -> TokenStream {
     match derive_get_size_impl(input) {
@@ -161,19 +165,42 @@ fn derive_get_size_impl(input: TokenStream) -> syn::Result<TokenStream> {
                         let num_fields = unnamed_fields.unnamed.len();
 
                         let mut field_idents = Vec::with_capacity(num_fields);
-                        for i in 0..num_fields {
-                            field_idents.push(format_ident!("v{i}"));
-                        }
-
                         let mut field_cmds = Vec::with_capacity(num_fields);
 
-                        for (i, _field) in unnamed_fields.unnamed.iter().enumerate() {
+                        for (i, field) in unnamed_fields.unnamed.iter().enumerate() {
+                            // Parse all relevant attributes.
+                            let attr = StructFieldAttribute::from_attributes(&field.attrs)
+                                .map_err(|err| syn::Error::new_spanned(field, err.to_string()))?;
+
+                            // Fields handled by `size` or `ignore` are never read, so they are
+                            // bound to a wildcard to avoid unused variable warnings.
+                            if let Some(size) = attr.size {
+                                field_idents.push(quote! { _ });
+                                field_cmds.push(quote! {
+                                    total += #size;
+                                });
+
+                                continue;
+                            } else if attr.ignore {
+                                field_idents.push(quote! { _ });
+
+                                continue;
+                            }
+
                             let field_ident = format_ident!("v{i}");
 
-                            field_cmds.push(quote! {
+                            if let Some(size_fn) = attr.size_fn {
+                                field_cmds.push(quote! {
+                                    total += #size_fn(#field_ident);
+                                });
+                            } else {
+                                field_cmds.push(quote! {
                                     let (total_add, tracker) = ::get_size2::GetSize::get_heap_size_with_tracker(#field_ident, tracker);
                                     total += total_add;
                                 });
+                            }
+
+                            field_idents.push(quote! { #field_ident });
                         }
 
                         cmds.push(quote! {
@@ -199,17 +226,33 @@ fn derive_get_size_impl(input: TokenStream) -> syn::Result<TokenStream> {
                             let attr = StructFieldAttribute::from_attributes(&field.attrs)
                                 .map_err(|err| syn::Error::new_spanned(field, err.to_string()))?;
 
-                            if attr.ignore {
+                            // Fields handled by `size` or `ignore` are never read, so they stay
+                            // out of the pattern and are covered by its `..` rest pattern.
+                            if let Some(size) = attr.size {
                                 skipped_field = true;
+                                field_cmds.push(quote! {
+                                    total += #size;
+                                });
+
+                                continue;
+                            } else if attr.ignore {
+                                skipped_field = true;
+
                                 continue;
                             }
 
                             field_idents.push(field_ident);
 
-                            field_cmds.push(quote! {
-                                let (total_add, tracker) = ::get_size2::GetSize::get_heap_size_with_tracker(#field_ident, tracker);
-                                total += total_add;
-                            });
+                            if let Some(size_fn) = attr.size_fn {
+                                field_cmds.push(quote! {
+                                    total += #size_fn(#field_ident);
+                                });
+                            } else {
+                                field_cmds.push(quote! {
+                                    let (total_add, tracker) = ::get_size2::GetSize::get_heap_size_with_tracker(#field_ident, tracker);
+                                    total += total_add;
+                                });
+                            }
                         }
 
                         let pattern = if skipped_field {
@@ -239,7 +282,7 @@ fn derive_get_size_impl(input: TokenStream) -> syn::Result<TokenStream> {
             let generated = quote! {
                 impl #impl_generics ::get_size2::GetSize for #name #ty_generics #where_clause {
                     fn get_heap_size(&self) -> usize {
-                        let tracker = get_size2::StandardTracker::default();
+                        let tracker = ::get_size2::default_tracker();
 
                         let (total, _) = ::get_size2::GetSize::get_heap_size_with_tracker(self, tracker);
 
@@ -280,7 +323,19 @@ fn derive_get_size_impl(input: TokenStream) -> syn::Result<TokenStream> {
                 let attr = StructFieldAttribute::from_attributes(&field.attrs)
                     .map_err(|err| syn::Error::new_spanned(field, err.to_string()))?;
 
-                // NOTE There will be no attributes if this is a tuple struct.
+                // How this field is accessed: by name, or by position for tuple structs. The
+                // positional counter has to advance even when the field is handled by one of the
+                // attributes below, otherwise all following fields of a tuple struct would be
+                // read at the wrong position.
+                let accessor = field.ident.as_ref().map_or_else(
+                    || {
+                        let index = syn::Index::from(unidentified_fields_count);
+                        unidentified_fields_count += 1;
+                        quote! { #index }
+                    },
+                    |ident| quote! { #ident },
+                );
+
                 if let Some(size) = attr.size {
                     cmds.push(quote! {
                         total += #size;
@@ -288,15 +343,8 @@ fn derive_get_size_impl(input: TokenStream) -> syn::Result<TokenStream> {
 
                     continue;
                 } else if let Some(size_fn) = attr.size_fn {
-                    let ident = field.ident.as_ref().ok_or_else(|| {
-                        syn::Error::new_spanned(
-                            field,
-                            "get_size(size_fn = ...) is only supported on named fields",
-                        )
-                    })?;
-
                     cmds.push(quote! {
-                        total += #size_fn(&self.#ident);
+                        total += #size_fn(&self.#accessor);
                     });
 
                     continue;
@@ -304,27 +352,17 @@ fn derive_get_size_impl(input: TokenStream) -> syn::Result<TokenStream> {
                     continue;
                 }
 
-                if let Some(ident) = field.ident.as_ref() {
-                    cmds.push(quote! {
-                        let (total_add, tracker) = ::get_size2::GetSize::get_heap_size_with_tracker(&self.#ident, tracker);
-                        total += total_add;
-                    });
-                } else {
-                    let current_index = syn::Index::from(unidentified_fields_count);
-                    cmds.push(quote! {
-                        let (total_add, tracker) = ::get_size2::GetSize::get_heap_size_with_tracker(&self.#current_index, tracker);
-                        total += total_add;
-                    });
-
-                    unidentified_fields_count += 1;
-                }
+                cmds.push(quote! {
+                    let (total_add, tracker) = ::get_size2::GetSize::get_heap_size_with_tracker(&self.#accessor, tracker);
+                    total += total_add;
+                });
             }
 
             // Build the trait implementation
             let generated = quote! {
                 impl #impl_generics ::get_size2::GetSize for #name #ty_generics #where_clause {
                     fn get_heap_size(&self) -> usize {
-                        let tracker = get_size2::StandardTracker::default();
+                        let tracker = ::get_size2::default_tracker();
 
                         let (total, _) = ::get_size2::GetSize::get_heap_size_with_tracker(self, tracker);
 
